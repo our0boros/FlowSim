@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-const (
-	width  = 80
-	height = 24
+var (
+	width  int
+	height int
 )
 
 type Cell struct {
@@ -22,18 +22,52 @@ type Cell struct {
 	velY     float64
 }
 
-var grid [height][width]Cell
+var grid [][]Cell
 var (
-	totalWater            float64 // 当前总水量（每帧计算）
-	addedWaterThisFrame   float64 // 本帧新加的水量
-	decayedWaterThisFrame float64 // 本帧衰减掉的水量
-	totalDecayedWater     float64 // 累计衰减水量
+	totalWater            float64
+	addedWaterThisFrame   float64
+	decayedWaterThisFrame float64
+	totalDecayedWater     float64
 )
 
 func clearScreen() {
 	cmd := exec.Command("clear") // or "cls" on Windows
 	cmd.Stdout = os.Stdout
 	_ = cmd.Run()
+}
+
+func getMapSize(path string) (int, int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	maxWidth := 0
+	lineCount := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		if len(line) > maxWidth {
+			maxWidth = len(line)
+		}
+		lineCount++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return 0, 0, err
+	}
+
+	return maxWidth, lineCount, nil
+}
+
+// 初始化动态 grid
+func initGrid(w, h int) {
+	grid = make([][]Cell, h)
+	for y := 0; y < h; y++ {
+		grid[y] = make([]Cell, w)
+	}
 }
 
 func loadMap(path string) {
@@ -43,6 +77,7 @@ func loadMap(path string) {
 		os.Exit(1)
 	}
 	defer file.Close()
+
 	clearScreen()
 	scanner := bufio.NewScanner(file)
 	y := 0
@@ -67,8 +102,7 @@ func loadMap(path string) {
 }
 
 func addWater() {
-	addedWaterThisFrame = 0 // 清零统计
-
+	addedWaterThisFrame = 0
 	y := 0
 	x := rand.Intn(width)
 	waterAmount := 0.1 + rand.Float64()*0.4
@@ -105,17 +139,20 @@ func addWater() {
 	}
 }
 
-// 计算每一格水的运动
 func simulate() {
-	newGrid := grid
-	decayRate := 0.8          // 每帧衰减20%
-	decayedWaterThisFrame = 0 // 本帧衰减统计清零
+	newGrid := make([][]Cell, height)
+	for y := range newGrid {
+		newGrid[y] = make([]Cell, width)
+		copy(newGrid[y], grid[y])
+	}
+
+	decayRate := 0.8
+	decayedWaterThisFrame = 0
 
 	for y := height - 2; y >= 0; y-- {
 		for x := 0; x < width; x++ {
 			cell := grid[y][x]
 
-			// 碰到底部水量慢慢减少
 			if y == height-2 && cell.water > 0 {
 				oldWater := cell.water
 				newWater := cell.water * decayRate
@@ -133,7 +170,7 @@ func simulate() {
 
 			amount := cell.water
 
-			// Try to flow down
+			// 向下流
 			if !grid[y+1][x].obstacle && newGrid[y+1][x].water < 1.0 {
 				flow := min(amount, 1.0-newGrid[y+1][x].water)
 				newGrid[y+1][x].water += flow
@@ -141,14 +178,14 @@ func simulate() {
 				continue
 			}
 
-			// Try to flow left
+			// 向左流
 			if x > 0 && !grid[y][x-1].obstacle && newGrid[y][x-1].water < 1.0 {
 				flow := min(amount/2, 1.0-newGrid[y][x-1].water)
 				newGrid[y][x-1].water += flow
 				newGrid[y][x].water -= flow
 			}
 
-			// Try to flow right
+			// 向右流
 			if x < width-1 && !grid[y][x+1].obstacle && newGrid[y][x+1].water < 1.0 {
 				flow := min(amount/2, 1.0-newGrid[y][x+1].water)
 				newGrid[y][x+1].water += flow
@@ -166,13 +203,11 @@ func draw() {
 	maxIdx := len(ss) - 1
 
 	var b strings.Builder
-	b.WriteString("\x1b[H") // 光标回顶部，不清屏
+	b.WriteString("\x1b[H")
 
-	// 主画面
-	for y := 0; y < height-1; y++ { // 留最后一行给统计
+	for y := 0; y < height-1; y++ {
 		for x := 0; x < width; x++ {
 			cell := grid[y][x]
-
 			if cell.obstacle {
 				b.WriteByte('#')
 			} else if cell.water > 0 {
@@ -190,30 +225,21 @@ func draw() {
 		b.WriteByte('\n')
 	}
 
-	// 统计行
 	totalWater = 0
 	for y := 0; y < height-1; y++ {
 		for x := 0; x < width; x++ {
 			totalWater += grid[y][x].water
 		}
 	}
-	// 统计行内容
-	// 第一行水量总览
-	status1 := fmt.Sprintf(
-		"Total Water: %.2f | Added This Frame: %.2f",
-		totalWater, addedWaterThisFrame,
-	)
+
+	status1 := fmt.Sprintf("Total Water: %.2f | Added This Frame: %.2f", totalWater, addedWaterThisFrame)
 	if len(status1) > width {
 		status1 = status1[:width]
 	}
 	b.WriteString(status1)
 	b.WriteByte('\n')
 
-	// 第二行衰减统计
-	status2 := fmt.Sprintf(
-		"Decayed This Frame: %.2f | Total Decayed: %.2f",
-		decayedWaterThisFrame, totalDecayedWater,
-	)
+	status2 := fmt.Sprintf("Decayed This Frame: %.2f | Total Decayed: %.2f", decayedWaterThisFrame, totalDecayedWater)
 	if len(status2) > width {
 		status2 = status2[:width]
 	}
@@ -221,6 +247,13 @@ func draw() {
 	b.WriteByte('\n')
 
 	fmt.Print(b.String())
+}
+
+func min(a, b float64) float64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func hideCursor() {
@@ -235,28 +268,30 @@ var frameCount int
 
 func main() {
 	hideCursor()
-	mapPath := ""
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run main.go <map/endoh1.c>")
-		mapPath = "map/endoh1.c"
-		//return
-	} else {
+	defer showCursor()
+
+	mapPath := "map/endoh1.c"
+	if len(os.Args) > 1 {
 		mapPath = os.Args[1]
 	}
 
-	loadMap(mapPath)
-	draw()
+	var err error
+	width, height, err = getMapSize(mapPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to get map size: %v\n", err)
+		os.Exit(1)
+	}
 
-	// 模拟循环（伪代码，按你已有逻辑调用即可）
+	initGrid(width, height)
+	loadMap(mapPath)
+
 	for {
 		frameCount++
 		if frameCount%5 == 0 {
-			// 每隔 5 帧才添加一次水，减少水量突变
 			addWater()
 		}
 		simulate()
 		draw()
 		time.Sleep(80 * time.Millisecond)
 	}
-	showCursor()
 }
