@@ -19,6 +19,7 @@ var (
 type Cell struct {
 	obstacle bool
 	water    float64
+	velX     float64
 	velY     float64
 }
 
@@ -145,57 +146,94 @@ func simulate() {
 		newGrid[y] = make([]Cell, width)
 		copy(newGrid[y], grid[y])
 	}
-
-	decayRate := 0.8
 	decayedWaterThisFrame = 0
 
-	for y := height - 2; y >= 0; y-- {
+	for y := 0; y < height; y++ {
 		for x := 0; x < width; x++ {
 			cell := grid[y][x]
-
-			if y == height-2 && cell.water > 0 {
-				oldWater := cell.water
-				newWater := cell.water * decayRate
-				if newWater < 0.01 {
-					newWater = 0
-				}
-				decayedWaterThisFrame += oldWater - newWater
-				newGrid[y][x].water = newWater
-				continue
-			}
-
 			if cell.obstacle || cell.water <= 0 {
 				continue
 			}
 
-			amount := cell.water
+			newX := int(float64(x) + cell.velX)
+			newY := int(float64(y) + cell.velY)
 
-			// 向下流
-			if !grid[y+1][x].obstacle && newGrid[y+1][x].water < 1.0 {
-				flow := min(amount, 1.0-newGrid[y+1][x].water)
-				newGrid[y+1][x].water += flow
-				newGrid[y][x].water -= flow
-				continue
+			// 判断是否撞墙
+			isWall := false
+			if newX < 0 || newX >= width || newY < 0 || newY >= height {
+				isWall = true
+			} else if grid[newY][newX].obstacle {
+				isWall = true
 			}
 
-			// 向左流
-			if x > 0 && !grid[y][x-1].obstacle && newGrid[y][x-1].water < 1.0 {
-				flow := min(amount/2, 1.0-newGrid[y][x-1].water)
-				newGrid[y][x-1].water += flow
-				newGrid[y][x].water -= flow
-			}
+			if isWall {
+				// 撞墙/障碍反弹，带损耗
+				// 速度反向并乘以损耗系数
+				var loss float64
+				if newX < 0 || newX >= width || newY < 0 || newY >= height {
+					// 碰边界墙，损耗更大
+					loss = 0.6
+				} else {
+					// 碰障碍物，损耗稍小
+					loss = 0.8
+				}
 
-			// 向右流
-			if x < width-1 && !grid[y][x+1].obstacle && newGrid[y][x+1].water < 1.0 {
-				flow := min(amount/2, 1.0-newGrid[y][x+1].water)
-				newGrid[y][x+1].water += flow
-				newGrid[y][x].water -= flow
+				reflectX := -cell.velX * loss
+				reflectY := -cell.velY * loss
+
+				// 反弹力度也和水量有关，水越多能量越大，可调节如下：
+				reboundFactor := 0.5 + 0.5*min(1.0, cell.water) // 0.5~1.0
+
+				newGrid[y][x].velX = reflectX * reboundFactor
+				newGrid[y][x].velY = reflectY * reboundFactor
+
+				// 水量保持不变
+				newGrid[y][x].water += cell.water
+			} else {
+				// 正常移动
+				if newGrid[newY][newX].water < 1.0 {
+					flow := min(cell.water, 1.0-newGrid[newY][newX].water)
+					newGrid[newY][newX].water += flow
+					newGrid[newY][newX].velX = cell.velX * 0.98          // 阻尼
+					newGrid[newY][newX].velY = (cell.velY + 0.05) * 0.98 // 加重力模拟
+
+					newGrid[y][x].water -= flow
+				}
 			}
 		}
 	}
 
 	grid = newGrid
-	totalDecayedWater += decayedWaterThisFrame
+}
+func velocityArrow(vx, vy float64) rune {
+	const threshold = 0.1 // 低于这个速度视为静止
+
+	if math.Hypot(vx, vy) < threshold {
+		return '·'
+	}
+
+	angle := math.Atan2(vy, vx) * 180 / math.Pi // 角度制，-180 ~ +180
+
+	switch {
+	case angle >= -22.5 && angle < 22.5:
+		return '→'
+	case angle >= 22.5 && angle < 67.5:
+		return '↗'
+	case angle >= 67.5 && angle < 112.5:
+		return '↑'
+	case angle >= 112.5 && angle < 157.5:
+		return '↖'
+	case angle >= 157.5 || angle < -157.5:
+		return '←'
+	case angle >= -157.5 && angle < -112.5:
+		return '↙'
+	case angle >= -112.5 && angle < -67.5:
+		return '↓'
+	case angle >= -67.5 && angle < -22.5:
+		return '↘'
+	default:
+		return '·'
+	}
 }
 
 func draw() {
@@ -208,19 +246,26 @@ func draw() {
 	for y := 0; y < height-1; y++ {
 		for x := 0; x < width; x++ {
 			cell := grid[y][x]
+			debugMode := true // 你可以定义成全局变量或者函数参数控制是否显示方向
+
 			if cell.obstacle {
 				b.WriteByte('#')
 			} else if cell.water > 0 {
-				idx := int(cell.water * float64(maxIdx))
-				if idx > maxIdx {
-					idx = maxIdx
-				} else if idx < 0 {
-					idx = 0
+				if debugMode {
+					b.WriteRune(velocityArrow(cell.velX, cell.velY))
+				} else {
+					idx := int(cell.water * float64(maxIdx))
+					if idx > maxIdx {
+						idx = maxIdx
+					} else if idx < 0 {
+						idx = 0
+					}
+					b.WriteRune(ss[idx])
 				}
-				b.WriteRune(ss[idx])
 			} else {
 				b.WriteByte(' ')
 			}
+
 		}
 		b.WriteByte('\n')
 	}
