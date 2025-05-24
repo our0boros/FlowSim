@@ -35,8 +35,13 @@ FlowSim 是一个用 Go 语言实现的基于字符终端的二维水流体模�
 1. 编译并运行（需要提供地图文件路径，例如 `endoh1.c`）：
 
    ```bash
-   go run main.go endoh1.c
-
+   go run main.go map/endoh1.c
+   ```
+   或者 默认路径
+   ```bash
+   go run main.go
+   ```
+   
 2. 终端内会显示模拟过程，按 Ctrl+C 结束。
 
 3. 地图文件格式：
